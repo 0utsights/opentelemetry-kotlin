@@ -33,7 +33,8 @@ public fun createOpenTelemetry(
 ): OpenTelemetry {
     val resourceFactory = ResourceFactoryImpl()
     val cfg = OpenTelemetryConfigImpl(clock).apply(config)
-    val behavior = defaultBehaviorReader().read(configFilePath = cfg.configFilePath, dsl = cfg.toBehavior())
+    val behavior = defaultBehaviorReader(sdkErrorHandler = cfg.sdkErrorHandler)
+        .read(configFilePath = cfg.configFilePath, dsl = cfg.toBehavior())
 
     // configFactory is legacy - use behavior to control SDK functionality instead
     val configFactory = SdkConfigFactory(cfg, behavior, resourceFactory)

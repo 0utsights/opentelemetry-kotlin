@@ -4,6 +4,7 @@ import io.opentelemetry.kotlin.Clock
 import io.opentelemetry.kotlin.attributes.DEFAULT_ATTRIBUTE_LIMIT
 import io.opentelemetry.kotlin.attributes.DEFAULT_ATTRIBUTE_VALUE_LENGTH_LIMIT
 import io.opentelemetry.kotlin.behavior.AttributeLimitsBehavior
+import io.opentelemetry.kotlin.behavior.SamplerBehavior
 import io.opentelemetry.kotlin.behavior.SpanLimitsBehavior
 import io.opentelemetry.kotlin.behavior.TracerProviderBehavior
 import io.opentelemetry.kotlin.config.dsl.SpanLimitsConfigDslImpl
@@ -23,6 +24,7 @@ import io.opentelemetry.kotlin.tracing.export.SpanProcessor
 import io.opentelemetry.kotlin.tracing.sampling.Sampler
 import io.opentelemetry.kotlin.tracing.sampling.alwaysOn
 import io.opentelemetry.kotlin.tracing.sampling.parentBased
+import io.opentelemetry.kotlin.tracing.sampling.toSampler
 
 internal class TracerProviderConfigImpl(
     private val clock: Clock,
@@ -31,7 +33,7 @@ internal class TracerProviderConfigImpl(
 ) : TracerProviderConfigDsl, ResourceConfigDsl by resourceConfigImpl {
 
     private var processor: SpanProcessor? = null
-    private var samplerAction: SamplerConfigDsl.() -> Sampler = { parentBased(root = alwaysOn()) }
+    private var samplerAction: (SamplerConfigDsl.() -> Sampler)? = null
     private val defaultTracerConfig = TracerConfigImpl(true)
     private var tracerConfigurator: TracerConfigurator = TracerConfigurator {
         defaultTracerConfig
@@ -68,14 +70,24 @@ internal class TracerProviderConfigImpl(
         base: Resource,
         globalLimits: AttributeLimitsBehavior,
         spanLimits: SpanLimitsBehavior,
-    ): TracingConfig = TracingConfig(
-        processor = processor,
-        spanLimits = generateSpanLimitsConfig(globalLimits, spanLimits),
-        resource = base.merge(resourceConfigImpl.generateResource()),
-        sdkErrorHandler = sdkErrorHandler,
-        samplerFactory = { spanFactory -> SamplerConfigImpl(spanFactory).samplerAction() },
-        tracerConfigurator = tracerConfigurator,
-    )
+    ): TracingConfig {
+        val action = samplerAction ?: { parentBased(root = alwaysOn()) }
+        return TracingConfig(
+            processor = processor,
+            spanLimits = generateSpanLimitsConfig(globalLimits, spanLimits),
+            resource = base.merge(resourceConfigImpl.generateResource()),
+            sdkErrorHandler = sdkErrorHandler,
+            samplerFactory = { spanFactory -> SamplerConfigImpl(spanFactory).action() },
+            tracerConfigurator = tracerConfigurator,
+        )
+    }
+
+    internal fun applyResolvedSampler(behavior: SamplerBehavior?) {
+        if (samplerAction != null || behavior == null) {
+            return
+        }
+        samplerAction = { toSampler(behavior) }
+    }
 
     fun toBehavior(): TracerProviderBehavior =
         TracerProviderBehavior(
