@@ -3,6 +3,7 @@ package io.opentelemetry.kotlin.tracing.model
 import io.opentelemetry.kotlin.Clock
 import io.opentelemetry.kotlin.InstrumentationScopeInfo
 import io.opentelemetry.kotlin.ReentrantReadWriteLock
+import io.opentelemetry.kotlin.ThreadLocal
 import io.opentelemetry.kotlin.attributes.AnyValue
 import io.opentelemetry.kotlin.attributes.AttributesModel
 import io.opentelemetry.kotlin.attributes.AttributesMutator
@@ -52,6 +53,7 @@ internal class SpanModel(
     }
 
     private val lock = ReentrantReadWriteLock()
+    private val endingSpan = ThreadLocal<SpanModel>()
 
     private var state: State = State.STARTED
 
@@ -79,7 +81,9 @@ internal class SpanModel(
     private inline fun mutate(details: String, action: () -> Unit) {
         sdkErrorHandler.guard(details) {
             lock.write {
-                if (isRecordingInternal()) {
+                if (state == State.STARTED ||
+                    (state == State.ENDING && endingSpan.get() === this)
+                ) {
                     action()
                 }
             }
@@ -130,9 +134,15 @@ internal class SpanModel(
             if (!shouldEnd) {
                 return
             }
-            sdkErrorHandler.guard {
-                processor?.takeIf(SpanProcessor::isOnEndingRequired)
-                    ?.onEnding(ReadWriteSpanImpl(this))
+            val previousEndingSpan = endingSpan.get()
+            endingSpan.set(this)
+            try {
+                sdkErrorHandler.guard {
+                    processor?.takeIf(SpanProcessor::isOnEndingRequired)
+                        ?.onEnding(ReadWriteSpanImpl(this))
+                }
+            } finally {
+                endingSpan.set(previousEndingSpan)
             }
             val toExport = lock.write {
                 state = State.ENDED
