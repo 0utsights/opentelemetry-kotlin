@@ -19,6 +19,23 @@ import kotlin.test.assertTrue
 internal class SpanOnEndingOtherThreadTest {
 
     @Test
+    fun spanEndsWhenOnEndingIsNotRequired() {
+        val processor = FakeSpanProcessor(onEndingRequired = false)
+        val span = tracer(processor).startSpan("test")
+        span.setStringAttribute("key", "value")
+
+        span.end()
+        span.setName("after-ending")
+
+        assertTrue(processor.endingCalls.isEmpty())
+        with(processor.endCalls.single()) {
+            assertEquals("test", name)
+            assertEquals(mapOf("key" to "value"), attributes)
+            assertTrue(hasEnded)
+        }
+    }
+
+    @Test
     fun activeSpanMutationFromOtherThreadIsRetained() {
         val processor = FakeSpanProcessor()
         val workerFinished = CountDownLatch(1)

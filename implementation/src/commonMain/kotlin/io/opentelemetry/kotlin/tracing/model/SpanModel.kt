@@ -53,7 +53,7 @@ internal class SpanModel(
     }
 
     private val lock = ReentrantReadWriteLock()
-    private val endingSpan = ThreadLocal<SpanModel>()
+    private val endingSpan = lazy { ThreadLocal<SpanModel>() }
 
     private var state: State = State.STARTED
 
@@ -81,9 +81,9 @@ internal class SpanModel(
     private inline fun mutate(details: String, action: () -> Unit) {
         sdkErrorHandler.guard(details) {
             lock.write {
-                if (state == State.STARTED ||
-                    (state == State.ENDING && endingSpan.get() === this)
-                ) {
+                val isEndingOnThisThread = state == State.ENDING &&
+                    endingSpan.isInitialized() && endingSpan.value.get() === this
+                if (state == State.STARTED || isEndingOnThisThread) {
                     action()
                 }
             }
@@ -134,15 +134,17 @@ internal class SpanModel(
             if (!shouldEnd) {
                 return
             }
-            val previousEndingSpan = endingSpan.get()
-            endingSpan.set(this)
-            try {
-                sdkErrorHandler.guard {
-                    processor?.takeIf(SpanProcessor::isOnEndingRequired)
-                        ?.onEnding(ReadWriteSpanImpl(this))
+            sdkErrorHandler.guard {
+                processor?.takeIf(SpanProcessor::isOnEndingRequired)?.let { endingProcessor ->
+                    val callbackSpan = endingSpan.value
+                    val previousEndingSpan = callbackSpan.get()
+                    callbackSpan.set(this)
+                    try {
+                        endingProcessor.onEnding(ReadWriteSpanImpl(this))
+                    } finally {
+                        callbackSpan.set(previousEndingSpan)
+                    }
                 }
-            } finally {
-                endingSpan.set(previousEndingSpan)
             }
             val toExport = lock.write {
                 state = State.ENDED
